@@ -1,4 +1,4 @@
-README — Finder (búsqueda distribuida por sufijos)
+# README — Finder (búsqueda distribuida por sufijos)
 
 Este proyecto busca un host “perdido” probando ping sobre un prefijo/base concatenado con sufijos generados (a–z, 0–9) de longitud L, utilizando hilos y diferentes estrategias de división de trabajo.
 
