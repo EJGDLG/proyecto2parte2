@@ -1,93 +1,124 @@
 # README — Finder (búsqueda distribuida por sufijos)
 
-Este proyecto busca un host “perdido” probando ping sobre un prefijo/base concatenado con sufijos generados (a–z, 0–9) de longitud L, utilizando hilos y diferentes estrategias de división de trabajo.
+Este proyecto busca un host “perdido” realizando pings concurrentes sobre una base o prefijo concatenado con sufijos generados automáticamente (a–z, 0–9) de longitud L, utilizando múltiples hilos y diferentes estrategias de división de trabajo (dynamic, round_robin, random_static).
 
-Requisitos
+El objetivo es demostrar paralelismo, coordinación entre hilos y estrategias de asignación de trabajo para tareas IO-bound como los pings.
 
-Python 3.8+
+## Versiones disponibles
+1. finder.c — Implementación en C (multithread con pthread)
+2. finder.py — Versión equivalente en Python (multiprocessing/threading)
 
-Acceso al comando ping:
+Ambas cumplen la misma lógica general y permiten comparar rendimiento entre lenguajes.
 
-Windows: ping -n
+## Requisitos
+Para la versión en C:
+
+Linux, macOS o WSL (Windows Subsystem for Linux)
+
+gcc y librerías de desarrollo (paquete build-essential)
+
+Acceso al comando ping
 
 Linux/macOS: ping -c
 
-Red funcionando (o usa el modo simulado).
+Windows: ping -n (si compilas con MinGW o MSYS2)
 
-Instalación
-# Clona o copia finder.py en una carpeta
+Instalación de dependencias básicas en Ubuntu:
+
+sudo apt update
+sudo apt install -y build-essential
+
+
+Compilación:
+
+gcc -O2 -pthread finder.c -o finder
+
+Para la versión en Python:
+
+Python 3.8+
+
+Acceso a ping (igual que en C)
+
+Red funcionando (o variable de entorno FINDER_MOCK para modo simulado)
+
+Comprobación rápida:
+
 python --version
 
-Uso básico
+## Concepto general
+
+Se generan todos los posibles sufijos de longitud L usando los caracteres [a–z0–9].
+
+Cada sufijo se concatena con la base para formar un posible host.
+
+Cada hilo intenta hacer ping a su host y reporta los que respondan.
+
+Según el modo de trabajo, los hilos comparten una cola (dynamic) o procesan bloques estáticos (round_robin, random_static).
+
+## Uso básico
+En C:
+./finder <base> <length> <variant> <workers>
+
+En Python:
 python finder.py <base> <length> <variant> [n_workers] [--verbose] [--selftest]
-# variant ∈ { dynamic | round_robin | random_static }
+
+Parámetros comunes:
+Parámetro	Descripción
+base	Prefijo o parte inicial (por ej. 127.0.0. o srv-)
+length	Longitud del sufijo (1 → a..z,0..9)
+variant	dynamic, round_robin, random_static
+workers	Número de hilos o procesos concurrentes
+--verbose	(Python) salida detallada
+--selftest	(Python) ejecuta pruebas internas
+- Pruebas recomendadas (y por qué)
+## 1) Prueba positiva mínima
+
+C:
+
+./finder 127.0.0. 1 dynamic 2
 
 
-base: prefijo, p. ej. srv- o 192.168.1.
-
-length: longitud del sufijo (ej. 1 → a..z,0..9)
-
-variant:
-
-dynamic: cola compartida (mejor balanceo de carga)
-
-round_robin: partición secuencial por bloques
-
-random_static: baraja la lista y luego particiona por bloques
-
-n_workers: hilos (por defecto, núcleos de la máquina)
-
---verbose: salida detallada
-
---selftest: corre pruebas integradas (ver más abajo)
-
-Comandos de pruebas + resultados esperados (y por qué)
-
-Nota: en Windows y Linux funcionan igual. Si tu red/host bloquea ICMP, ping podría fallar. Empieza por localhost para validar.
-
-1) Prueba positiva mínima (debe ENCONTRAR)
-
-Comando
+Python:
 
 python finder.py 127.0.0.1 0 dynamic
 
 
-Resultado esperado
+- Resultado esperado:
 
-Encontrados (sufijos con ping OK):
-Tiempo total: X.XXXs | workers=... | variant=dynamic
+Encontrados (sufijos con ping OK): 0, 1, 2, 3, ...
 
 
-Por qué
-length=0 genera el único sufijo vacío "" → se hace ping a 127.0.0.1 directamente, que normalmente responde.
+Por qué:
+Los hosts 127.0.0.0–127.0.0.9 pertenecen a loopback, por lo tanto responden al ping.
 
-2) Prueba negativa mínima (NO debe encontrar)
+## 2) Prueba negativa mínima
 
-Comando
+C:
+
+./finder 203.0.113. 1 dynamic 2
+
+
+Python:
 
 python finder.py 203.0.113.1 0 dynamic
 
 
-Resultado esperado
+- Resultado esperado:
 
 No se encontraron hosts válidos.
-Tiempo total: X.XXXs | ...
 
 
-Por qué
-203.0.113.0/24 (TEST-NET-3) está reservado para documentación, típicamente no responde.
+Por qué:
+203.0.113.0/24 está reservado para documentación (TEST-NET-3), y normalmente no responde.
 
-3) Autotest integrado (2 casos: uno positivo y uno negativo)
-
-Comando
-
+## 3) Autotest integrado (solo en Python)
 python finder.py --selftest
 
 
-Resultado esperado
+Resultado esperado:
 
 == Selftest 1: 127.0.0.1 (debe ENCONTRAR) ==
-Hits: ['']           # o equivalente
+Hits: ['']
 OK en X.XXX s
 
 == Selftest 2: 203.0.113.1 (NO debe encontrar) ==
@@ -95,65 +126,98 @@ Hits: []
 OK en X.XXX s
 
 
-Por qué
-Verifica rápidamente que ping_host y la coordinación de hilos funcionan en tu entorno.
+Por qué:
+Verifica que la función ping_host y la coordinación de hilos funcionen correctamente.
 
-4) Diversas estrategias de división (comparación)
-4.a) Dinámica (cola compartida + barajado)
-python finder.py 203.0.113.1 2 dynamic 16
-
-
-Esperado: “No se encontraron…” y tiempo bajo/estable.
-Por qué: Reparte tareas en una cola, los hilos toman el “siguiente” trabajo; se adapta bien a latencias variables.
-
-4.b) Secuencial por bloques (round_robin)
-python finder.py 203.0.113.1 2 round_robin 16
+## 4) Comparar estrategias de trabajo
+a) Dinámica (cola compartida)
+./finder 203.0.113. 1 dynamic 8
 
 
-Esperado: “No se encontraron…”.
-Por qué: Partición en bloques contiguos. Sencillo; si algunos sufijos tardan más perderá algo de balanceo.
+Esperado: No se encuentran hosts, tiempo uniforme.
+Por qué: balanceo óptimo de carga entre hilos.
 
-4.c) Estática aleatoria (random_static)
-python finder.py 203.0.113.1 2 random_static 16
+b) Round Robin (bloques secuenciales)
+./finder 203.0.113. 1 round_robin 8
+
+c) Estática aleatoria (bloques barajados)
+./finder 203.0.113. 1 random_static 8
 
 
-Esperado: “No se encontraron…”.
-Por qué: Igual a 4.b, pero baraja primero para reducir sesgos del orden.
+Interpretación:
 
-Interpretación: en redes reales, dynamic suele terminar igual o más rápido que las estáticas cuando hay heterogeneidad de latencias.
+dynamic tiende a ser más eficiente si hay latencias variables.
 
-5) Caso “mixto” en LAN (ajustando sufijos)
+round_robin es más simple pero puede tener desequilibrio.
 
-Para IPs es más útil generar únicamente dígitos (p. ej. 00..99). Dos caminos:
+random_static mezcla el orden para mejorar balanceo sin cola.
 
-Rápido (sin tocar código): usa length=0 para probar un host exacto (como 192.168.1.1).
+## 5) Modo simulado (sin red)
 
-Personalizado (requiere editar el script): cambia ALPHABET = "0123456789" y usa length apropiado.
+Puedes reemplazar ping_host por un mock que devuelve éxitos aleatorios:
 
-Ejemplo (sin editar, solo host exacto):
+static int ping_host(const char *host) {
+    usleep(1000 + rand() % 5000);
+    return (rand() % 10) == 0;  // 10% de éxito aleatorio
+}
 
-python finder.py 192.168.1.1 0 dynamic
-# Si responde tu router, deberías ver “Encontrados…”
 
-6) Modo simulado (sin red / CI)
+O, en Python, define:
 
-Activa el mock de ping via variable de entorno (si implementaste el bloque FINDER_MOCK):
-
-Comando
-
-# Simula éxitos cuando el host termina en "ok" o es localhost (ejemplo)
 FINDER_MOCK=1 python finder.py base- 1 random_static
 
 
-Esperado: “Encontrados…” solo cuando el sufijo simulado coincide con las reglas del mock.
-Por qué: Permite probar lógica, hilos y división de trabajo sin depender de la red.
+Por qué:
+Permite probar concurrencia sin depender de conexión de red o permisos ICMP.
 
-Interpretación de los resultados
+## Precauciones
 
-“Encontrados (sufijos…)” → al menos un host respondió al ping.
+36^length crece exponencialmente (usa length ≤ 3 para evitar saturar memoria o CPU).
 
-“No se encontraron hosts válidos.” → ninguno respondió (posible: host inexistente, firewall, DNS que no resuelve, timeout corto, red caída).
+Si la ejecución se alarga, usa Ctrl + C para detenerla.
 
-Tiempo total: sirve para comparar estrategias y número de hilos. En general, más hilos ↓ tiempo hasta saturar CPU/red.
+Evita escanear redes que no te pertenecen (puede considerarse intrusivo).
 
-Variabilidad: latencias, pérdidas de paquetes y firewalls pueden afectar.
+## Interpretación de resultados
+Salida	Significado
+Encontrados (sufijos con ping OK): ...	Al menos un host respondió
+No se encontraron hosts válidos.	Ninguno respondió (o red bloqueada)
+bash: syntax error near unexpected token	Copiaste la salida como comando
+^[[200~	Artefacto de pegado desde portapapeles en terminal
+No such file or directory	No estás en el directorio del binario o lo borraste
+## Escalado y memoria estimada
+Length	Combinaciones (36^L)	Aprox. memoria
+1	36	<1 KB
+2	1,296	<1 MB
+3	46,656	<10 MB
+4	1.68 M	>200 MB
+5	60 M	¡Muy pesado! 
+- Subdominios (prefijo antes del dominio)
+
+Para probar subdominios (a.example.com, b.example.com), el programa debe construir sufijo + base en vez de base + sufijo.
+
+Agregar en finder.c:
+
+int prefix = 0;
+const char *env = getenv("FINDER_PREFIX");
+if (env && strcmp(env, "1") == 0) prefix = 1;
+
+
+Y en la sección donde se construye el host:
+
+if (prefix)
+    snprintf(host, len, "%s%s", suf, a->base);
+else
+    snprintf(host, len, "%s%s", a->base, suf);
+
+
+Luego ejecutar:
+
+FINDER_PREFIX=1 ./finder .example.com 1 random_static 8
+
+ ## Alternativa con Docker
+
+Sin necesidad de instalar gcc localmente:
+
+docker run --rm -it -v "$PWD":/work -w /work gcc:12 bash -lc \
+"gcc -O2 -pthread finder.c -o finder && ./finder 127.0.0. 1 dynamic 2"
